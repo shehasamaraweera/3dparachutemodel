@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>3D Parachute Model</title>
+<style>
+:root{--bg:#eef2f6;--fg:#1c1f23;--card:#fff;--muted:#66707a;--accent:#d33a35;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181c;--fg:#eee;--card:#22262b;--muted:#9aa4ae;--accent:#ee5a55}}
+:root[data-theme="dark"]{--bg:#15181c;--fg:#eee;--card:#22262b;--muted:#9aa4ae;--accent:#ee5a55}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh}
+h1{font-size:1.3rem;margin:20px 16px 4px;text-align:center}
+p.sub{margin:0 16px;color:var(--muted);font-size:.9rem;text-align:center}
+#stage{width:100%;max-width:560px;height:420px;touch-action:none;cursor:grab;user-select:none}
+#stage:active{cursor:grabbing}
+canvas{width:100%;height:100%;display:block}
+.card{background:var(--card);border-radius:14px;padding:14px 18px;margin:10px 16px;max-width:460px;width:calc(100% - 32px);box-sizing:border-box;font-size:.95rem;line-height:1.6}
+.card b{color:var(--accent)}
+.inputs{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:10px}
+.inputs label{display:flex;flex-direction:column;font-size:.8rem;color:var(--muted);gap:4px}
+.inputs input{font-size:1rem;padding:8px;border-radius:8px;border:1px solid var(--muted);background:var(--bg);color:var(--fg);width:100%;box-sizing:border-box}
+.btns{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin:6px 16px 20px}
+button{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:10px 16px;font-size:.95rem;cursor:pointer}
+button.alt{background:var(--card);color:var(--fg);border:1px solid var(--muted)}
+.note{color:var(--muted);font-size:.8rem}
+</style>
+</head>
+<body>
+<h1>3D Parachute Model</h1>
+<p class="sub">Drag to rotate • Scroll or pinch buttons to zoom • Edit sizes below</p>
+<div id="stage"><canvas id="cv"></canvas></div>
+<div class="btns">
+  <button class="alt" id="zin">Zoom +</button>
+  <button class="alt" id="zout">Zoom −</button>
+  <button class="alt" id="spinBtn">Auto-rotate: on</button>
+  <button class="alt" id="resetBtn">Reset</button>
+</div>
+<div class="card">
+  <div class="inputs">
+    <label>Canopy diameter (cm)<input id="D" type="number" inputmode="decimal" min="1" max="60" step="0.5" value="11"></label>
+    <label>Canopy dome height (cm)<input id="H" type="number" inputmode="decimal" min="0.5" max="40" step="0.5" value="4"></label>
+    <label>String length (cm)<input id="L" type="number" inputmode="decimal" min="1" max="80" step="0.5" value="15"></label>
+    <label>Payload width (cm)<input id="P" type="number" inputmode="decimal" min="0.5" max="20" step="0.5" value="1.5"></label>
+    <label>Number of strings<input id="N" type="number" inputmode="numeric" min="3" max="16" step="1" value="6"></label>
+  </div>
+  <div>Total height: <b id="tot"></b></div>
+  <div>String hanging height: <b id="vert"></b></div>
+  <div class="note">Read from your sketch: 11 cm canopy, 4 cm dome, 15 cm strings, 1.5 cm payload, 6 strings, about 20 cm tall. The sketch is unclear in places, so change the values if needed.</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+var cv=document.getElementById('cv'),box=document.getElementById('stage');
+var renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+var scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(40,1,0.1,500);
+scene.add(new THREE.HemisphereLight(0xffffff,0x777777,0.9));
+var dl=new THREE.DirectionalLight(0xffffff,0.7);dl.position.set(10,20,15);scene.add(dl);
+var grid=new THREE.GridHelper(40,40,0x888888,0x888888);grid.material.transparent=true;grid.material.opacity=0.3;scene.add(grid);
+var g=new THREE.Group();scene.add(g);
+var ids=['D','H','L','P','N'],el={};ids.forEach(function(i){el[i]=document.getElementById(i)});
+function num(k,d,mn,mx){var v=parseFloat(el[k].value);if(!(v>0))v=d;return Math.min(Math.max(v,mn),mx)}
+function fmt(n){return (Math.round(n*10)/10)+' cm'}
+var dist=48,ry=0.6,rx=0.3,spin=true,down=false,lx=0,ly=0;
+function clear(){while(g.children.length){var c=g.children[0];g.remove(c);if(c.geometry)c.geometry.dispose()}}
+function build(){
+  clear();
+  var D=num('D',11,1,60),h=num('H',4,0.5,40),L=num('L',15,1,80),p=num('P',1.5,0.5,20),n=Math.round(num('N',6,3,16));
+  var a=D/2;
+  if(L<a*1.02)L=a*1.02;
+  var R=(a*a+h*h)/(2*h),th=Math.acos((R-h)/R);
+  for(var i=0;i<n;i++){
+    var geo=new THREE.SphereGeometry(R,12,16,i*2*Math.PI/n,2*Math.PI/n,0,th);
+    geo.translate(0,-(R-h),0);
+    var m=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:i%2?0xffffff:0xe53935,side:THREE.DoubleSide,roughness:0.7}));
+    g.add(m);
+  }
+  var v=Math.sqrt(L*L-a*a);
+  var lm=new THREE.LineBasicMaterial({color:0x444444});
+  for(var j=0;j<n;j++){
+    var f=j*2*Math.PI/n;
+    var pts=[new THREE.Vector3(-a*Math.cos(f),0,a*Math.sin(f)),new THREE.Vector3(0,-v,0)];
+    g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lm));
+  }
+  var pl=new THREE.Mesh(new THREE.SphereGeometry(p/2,24,16),new THREE.MeshStandardMaterial({color:0x2d3640,roughness:0.5}));
+  pl.position.y=-v-p/2;g.add(pl);
+  var total=h+v+p;
+  g.position.y=-(h-v-p)/2;
+  grid.position.y=-total/2;
+  document.getElementById('tot').textContent=fmt(total);
+  document.getElementById('vert').textContent=fmt(v);
+  var need=Math.max(total,D)*2.6;
+  if(!build.init){dist=need;build.init=true}
+  build.base=need;
+}
+function size(){var w=box.clientWidth,hh=box.clientHeight;renderer.setSize(w,hh,false);cam.aspect=w/hh;cam.updateProjectionMatrix()}
+function frame(){
+  if(spin&&!down)ry+=0.006;
+  cam.position.set(dist*Math.sin(ry)*Math.cos(rx),dist*Math.sin(rx),dist*Math.cos(ry)*Math.cos(rx));
+  cam.lookAt(0,0,0);
+  renderer.render(scene,cam);
+  requestAnimationFrame(frame);
+}
+ids.forEach(function(i){el[i].addEventListener('input',build)});
+box.addEventListener('pointerdown',function(e){down=true;lx=e.clientX;ly=e.clientY;box.setPointerCapture(e.pointerId)});
+box.addEventListener('pointermove',function(e){if(!down)return;ry-=(e.clientX-lx)*0.01;rx=Math.max(-1.4,Math.min(1.4,rx+(e.clientY-ly)*0.01));lx=e.clientX;ly=e.clientY});
+box.addEventListener('pointerup',function(){down=false});
+box.addEventListener('pointercancel',function(){down=false});
+box.addEventListener('wheel',function(e){e.preventDefault();dist=Math.max(8,Math.min(200,dist*(e.deltaY>0?1.08:0.92)))},{passive:false});
+document.getElementById('zin').onclick=function(){dist=Math.max(8,dist*0.85)};
+document.getElementById('zout').onclick=function(){dist=Math.min(200,dist*1.18)};
+document.getElementById('spinBtn').onclick=function(){spin=!spin;this.textContent='Auto-rotate: '+(spin?'on':'off')};
+document.getElementById('resetBtn').onclick=function(){el.D.value=11;el.H.value=4;el.L.value=15;el.P.value=1.5;el.N.value=6;rx=0.3;ry=0.6;build();dist=build.base};
+window.addEventListener('resize',size);
+build();size();frame();
+</script>
+</body>
+</html>
